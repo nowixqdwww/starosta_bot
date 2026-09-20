@@ -24,3 +24,13 @@ class User(Base):
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
 
     group: Mapped[Group] = relationship()
+
+
+class Lesson(Base):
+    __tablename__ = "lessons"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    weekday: Mapped[int]  # 0 = понедельник ... 6 = воскресенье
+    start_time: Mapped[str]  # "HH:MM"
+    title: Mapped[str]
