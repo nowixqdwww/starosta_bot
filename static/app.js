@@ -14,12 +14,12 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
 
-async function api(path, body) {
+async function api(path, body, method) {
   const headers = { Authorization: "tma " + tg.initData };
   if (body) headers["Content-Type"] = "application/json";
 
   const res = await fetch("/api" + path, {
-    method: body ? "POST" : "GET",
+    method: method || (body ? "POST" : "GET"),
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -38,6 +38,11 @@ function field(id, label, value = "") {
       <span>${label}</span>
       <input id="${id}" value="${esc(value)}" maxlength="100" autocomplete="off">
     </label>`;
+}
+
+function ask(message, callback) {
+  if (tg && tg.showConfirm) tg.showConfirm(message, callback);
+  else callback(confirm(message));
 }
 
 function setError(msg) { $(".error").textContent = msg || ""; }
@@ -149,7 +154,31 @@ function studentScreen(code, canGoBack) {
   };
 }
 
-function homeScreen(me) {
+/* ---------- главная: вкладки ---------- */
+
+const DAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
+const DAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+let me = null;
+let lessons = [];
+
+function homeScreen(user, tab = "schedule") {
+  me = user;
+  app.innerHTML = `
+    <h1>${esc(me.group.name)}</h1>
+    <nav class="tabs">
+      <button class="tab ${tab === "schedule" ? "active" : ""}" data-tab="schedule">Расписание</button>
+      <button class="tab ${tab === "group" ? "active" : ""}" data-tab="group">Группа</button>
+    </nav>
+    <div id="content"></div>`;
+
+  app.querySelectorAll(".tab").forEach((b) => {
+    b.onclick = () => homeScreen(me, b.dataset.tab);
+  });
+  if (tab === "group") groupTab();
+  else scheduleTab();
+}
+
+function groupTab() {
   const g = me.group;
   const isLeader = me.role === "leader";
 
@@ -161,12 +190,10 @@ function homeScreen(me) {
       <button class="secondary" id="copy">Скопировать код</button>
     </section>` : "";
 
-  app.innerHTML = `
-    <h1>${esc(g.name)}</h1>
+  $("#content").innerHTML = `
     <p class="lead">${esc(g.institution)}</p>
     <p class="hint">${isLeader ? "Староста" : "Студент"}: ${esc(me.name)}</p>
-    ${invite}
-    <p class="soon">Расписание и посещаемость скоро появятся.</p>`;
+    ${invite}`;
 
   if (!isLeader) return;
 
@@ -183,6 +210,104 @@ function homeScreen(me) {
       e.target.textContent = "Не удалось скопировать";
     }
   };
+}
+
+/* ---------- расписание ---------- */
+
+function lessonRow(l, editable) {
+  const inner = `<span class="time">${esc(l.start_time)}</span><span>${esc(l.title)}</span>`;
+  return editable
+    ? `<button class="lesson" data-id="${l.id}">${inner}</button>`
+    : `<div class="lesson">${inner}</div>`;
+}
+
+async function scheduleTab() {
+  const box = $("#content");
+  const isLeader = me.role === "leader";
+  box.innerHTML = '<p class="hint">Загружаем расписание…</p>';
+
+  try {
+    lessons = await api("/schedule");
+  } catch (e) {
+    box.innerHTML = `<p class="error">${esc(e.message)}</p>`;
+    return;
+  }
+
+  const today = (new Date().getDay() + 6) % 7; // в JS воскресенье = 0, у нас понедельник = 0
+  const days = DAYS.map((name, i) => ({ name, i, items: lessons.filter((l) => l.weekday === i) }))
+    .filter((d) => d.items.length);
+
+  const list = days.length
+    ? days.map((d) => `
+        <section class="day">
+          <h2>${d.name}${d.i === today ? ' <span class="today">сегодня</span>' : ""}</h2>
+          ${d.items.map((l) => lessonRow(l, isLeader)).join("")}
+        </section>`).join("")
+    : `<p class="empty">${isLeader
+        ? "Расписания пока нет. Добавь первую пару."
+        : "Староста ещё не добавил расписание."}</p>`;
+
+  box.innerHTML = list + (isLeader ? '<button class="primary" id="add">Добавить пару</button>' : "");
+
+  if (!isLeader) return;
+  $("#add").onclick = () => lessonScreen(null);
+  box.querySelectorAll("button.lesson").forEach((b) => {
+    b.onclick = () => lessonScreen(lessons.find((l) => l.id === Number(b.dataset.id)));
+  });
+}
+
+function lessonScreen(lesson) {
+  const editing = Boolean(lesson);
+  const day = editing ? lesson.weekday : (new Date().getDay() + 6) % 7;
+
+  app.innerHTML = `
+    <button class="back" id="back">Назад</button>
+    <h1>${editing ? "Изменить пару" : "Новая пара"}</h1>
+    <form id="form" novalidate>
+      <fieldset class="days">
+        <legend>День недели</legend>
+        ${DAYS_SHORT.map((d, i) => `
+          <label class="chip">
+            <input type="radio" name="day" value="${i}" ${i === day ? "checked" : ""}>
+            <span>${d}</span>
+          </label>`).join("")}
+      </fieldset>
+      ${field("title", "Название пары", editing ? lesson.title : "")}
+      <label class="field" for="time">
+        <span>Время начала</span>
+        <input id="time" type="time" value="${editing ? esc(lesson.start_time) : ""}">
+      </label>
+      <p class="error" role="alert"></p>
+      <button class="primary" type="submit">Сохранить</button>
+      ${editing ? '<button class="danger" type="button" id="del">Удалить пару</button>' : ""}
+    </form>`;
+
+  $("#back").onclick = () => homeScreen(me);
+
+  $("#form").onsubmit = (e) => {
+    e.preventDefault();
+    const weekday = Number(app.querySelector('input[name="day"]:checked').value);
+    const title = $("#title").value.trim();
+    const start_time = $("#time").value;
+    if (!title || !start_time) return setError("Укажи название и время пары.");
+
+    submit($(".primary"), async () => {
+      const body = { weekday, title, start_time };
+      if (editing) await api("/schedule/" + lesson.id, body, "PUT");
+      else await api("/schedule", body);
+      homeScreen(me);
+    });
+  };
+
+  if (editing) {
+    $("#del").onclick = () => ask("Удалить эту пару?", (ok) => {
+      if (!ok) return;
+      submit($("#del"), async () => {
+        await api("/schedule/" + lesson.id, null, "DELETE");
+        homeScreen(me);
+      });
+    });
+  }
 }
 
 /* ---------- запуск ---------- */
