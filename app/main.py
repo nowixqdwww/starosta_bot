@@ -1,8 +1,10 @@
 import os
 import secrets
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -92,3 +94,8 @@ def register_student(data: StudentIn, tg=Depends(get_tg_user), db: Session = Dep
     db.add(User(tg_id=tg["id"], name=data.name, role="student", group_id=group.id))
     db.commit()
     return user_out(db.get(User, tg["id"]))
+
+
+# Mini App: index.html, style.css, app.js. Должно идти после всех /api маршрутов.
+app.mount("/", StaticFiles(directory=Path(__file__).parent.parent / "static", html=True), name="static")
+
