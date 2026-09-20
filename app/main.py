@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from .auth import get_tg_user
 from .db import Base, engine, get_db
 from .models import Group, User
+from .schedule import router as schedule_router
 
 Base.metadata.create_all(engine)
 app = FastAPI()
@@ -96,6 +97,7 @@ def register_student(data: StudentIn, tg=Depends(get_tg_user), db: Session = Dep
     return user_out(db.get(User, tg["id"]))
 
 
+app.include_router(schedule_router)
+
 # Mini App: index.html, style.css, app.js. Должно идти после всех /api маршрутов.
 app.mount("/", StaticFiles(directory=Path(__file__).parent.parent / "static", html=True), name="static")
-
